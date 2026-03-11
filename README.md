@@ -38,13 +38,71 @@ stockfolio-terraform-infra/
 
 ## Required GitHub Secrets
 
-Configure these secrets in your GitHub repository:
+### Step 1: Create S3 Bucket for Terraform State
 
-| Secret | Description | Example |
-|--------|-------------|---------|
-| `AWS_ROLE_ARN` | IAM Role ARN for GitHub Actions | `arn:aws:iam::123456789:role/github-actions-role` |
-| `TF_STATE_BUCKET` | S3 bucket for Terraform state | `stockfolio-terraform-state` |
-| `TF_DYNAMODB_TABLE` | DynamoDB table for state locking | `stockfolio-terraform-locks` |
+```bash
+# Create S3 bucket
+aws s3 mb s3://stockfolio-terraform-state --region ap-south-1
+
+# Enable versioning
+aws s3api put-bucket-versioning \
+  --bucket stockfolio-terraform-state \
+  --versioning-configuration Status=Enabled
+
+# Block public access
+aws s3api put-public-access-block \
+  --bucket stockfolio-terraform-state \
+  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+```
+
+### Step 2: Create DynamoDB Table for State Locking
+
+```bash
+aws dynamodb create-table \
+  --table-name stockfolio-terraform-locks \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST \
+  --region ap-south-1
+```
+
+### Step 3: Create IAM Role for GitHub Actions
+
+Create a new IAM Role with OIDC provider for GitHub Actions:
+
+1. Go to IAM → Roles → Create role
+2. Select **Web identity**
+3. Choose your GitHub OIDC provider
+4. Set repository: `your-username/stockfolio-terraform-infra`
+5. Attach the policy below:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*", "eks:*", "iam:*", "s3:*", "dynamodb:*",
+        "logs:*", "cloudwatch:*", "autoscaling:*", "vpc:*", "ecr:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Step 4: Add GitHub Secrets
+
+Go to **GitHub → Settings → Secrets and variables → Actions** and add:
+
+| Secret Name | Value | Required |
+|------------|-------|----------|
+| `AWS_ROLE_ARN` | `arn:aws:iam::123456789:role/GitHubActionsRole` | ✅ Yes |
+| `TF_STATE_BUCKET` | `stockfolio-terraform-state` | ✅ Yes |
+| `TF_DYNAMODB_TABLE` | `stockfolio-terraform-locks` | ✅ Yes |
+
+**Replace `123456789` with your AWS Account ID!**
 
 ## Quick Start
 
