@@ -84,7 +84,7 @@ Create a new IAM Role with OIDC provider for GitHub Actions:
       "Effect": "Allow",
       "Action": [
         "ec2:*", "eks:*", "iam:*", "s3:*", "dynamodb:*",
-        "logs:*", "cloudwatch:*", "autoscaling:*", "vpc:*", "ecr:*"
+        "logs:*", "cloudwatch:*", "autoscaling:*", "ecr:*"
       ],
       "Resource": "*"
     }
