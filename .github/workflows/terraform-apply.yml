@@ -1,0 +1,161 @@
+name: Deploy Infrastructure (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to apply'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VERSION: '1.5'
+
+jobs:
+  terraform-apply-dev:
+    name: Terraform Apply - Dev
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'dev'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Select Workspace
+        id: workspace
+        run: terraform workspace select dev || terraform workspace new dev
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        working-directory: terraform/environments/dev
+        continue-on-error: true
+
+      - name: Post Plan Status
+        if: steps.plan.outputs.exitcode != 0
+        run: exit 1
+
+      - name: Terraform Apply
+        id: apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Apply (Manual)
+        id: apply_manual
+        if: github.event.inputs.environment == 'dev'
+        run: terraform apply -auto-approve
+        working-directory: terraform/environments/dev
+
+      - name: Output Cluster Info
+        if: steps.apply.outputs.exitcode == 0 || steps.apply_manual.outputs.exitcode == 0
+        run: |
+          echo "## Dev Environment Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster Name: $(terraform output -raw cluster_name)" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster Endpoint: $(terraform output -raw cluster_endpoint)" >> $GITHUB_STEP_SUMMARY
+        working-directory: terraform/environments/dev
+
+  terraform-apply-prod:
+    name: Terraform Apply - Prod
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'prod'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          role-session-name: GitHubActions-Prod
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=prod/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Select Workspace
+        id: workspace
+        run: terraform workspace select prod || terraform workspace new prod
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        working-directory: terraform/environments/prod
+        continue-on-error: true
+
+      - name: Post Plan Status
+        if: steps.plan.outputs.exitcode != 0
+        run: exit 1
+
+      - name: Terraform Apply
+        id: apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Apply (Manual)
+        id: apply_manual
+        if: github.event.inputs.environment == 'prod'
+        run: terraform apply -auto-approve
+        working-directory: terraform/environments/prod
+
+      - name: Output Cluster Info
+        if: steps.apply.outputs.exitcode == 0 || steps.apply_manual.outputs.exitcode == 0
+        run: |
+          echo "## Prod Environment Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster Name: $(terraform output -raw cluster_name)" >> $GITHUB_STEP_SUMMARY
+          echo "Cluster Endpoint: $(terraform output -raw cluster_endpoint)" >> $GITHUB_STEP_SUMMARY
+        working-directory: terraform/environments/prod
+

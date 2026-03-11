@@ -1,0 +1,200 @@
+# Cert-Manager Installation and DuckDNS ClusterIssuer for Free HTTPS
+# This configuration provides automatic HTTPS using Let's Encrypt with DuckDNS
+
+---
+# Cert-Manager Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    name: cert-manager
+---
+# Cert-Manager CRDs (apply these first)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusterissuers.cert-manager.io
+  labels:
+    app: cert-manager
+spec:
+  group: cert-manager.io
+  names:
+    kind: ClusterIssuer
+    listKind: ClusterIssuerList
+    plural: clusterissuers
+    singular: clusterissuer
+  scope: Cluster
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              acme:
+                type: object
+                properties:
+                  server:
+                    type: string
+                  email:
+                    type: string
+                  privateKeySecretRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                  solvers:
+                    type: array
+                    items:
+                      type: object
+              selfSigned:
+                type: object
+            required:
+            - acme
+        required:
+        - spec
+    served: true
+    storage: true
+---
+# Cert-Manager Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+---
+# Cert-Manager ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cert-manager
+rules:
+- apiGroups: [""]
+  resources: ["secrets", "services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["clusterissuers", "issuers", "certificates"]
+  verbs: ["*"]
+- apiGroups: ["acme.cert-manager.io"]
+  resources: ["challenges", "orders"]
+  verbs: ["*"]
+---
+# Cert-Manager ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cert-manager
+subjects:
+- kind: ServiceAccount
+  name: cert-manager
+  namespace: cert-manager
+---
+# Cert-Manager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cert-manager
+  template:
+    metadata:
+      labels:
+        app: cert-manager
+    spec:
+      serviceAccountName: cert-manager
+      containers:
+      - name: cert-manager
+        image: quay.io/jetstack/cert-manager-controller:v1.13.2
+        args:
+        - --v=2
+        - --cluster-resource-namespace=$(POD_NAMESPACE)
+        - --leader-election-namespace=$(POD_NAMESPACE)
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - containerPort: 10250
+          name: metrics
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+---
+# DuckDNS API Token Secret (Replace YOUR-DUCKDNS-TOKEN with your actual token)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: duckdns-api-token
+  namespace: cert-manager
+stringData:
+  token: "YOUR-DUCKDNS-TOKEN"
+---
+# Let's Encrypt ClusterIssuer for DuckDNS
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-duckdns
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com  # Replace with your email
+    privateKeySecretRef:
+      name: letsencrypt-duckdns-private-key
+    solvers:
+    - dns01:
+        route53:
+          region: ap-south-1
+      selector:
+        dnsZones:
+        - "duckdns.org"
+    - dns01:
+        clouddns:
+          project: "your-gcp-project"  # Required for Google Cloud DNS
+          serviceAccountSecretRef:
+            name: clouddns-sa
+            key: credentials.json
+      selector:
+        dnsZones:
+        - "your-domain.duckdns.org"
+---
+# Alternative: Cloudflare DNS Challenge (Recommended for DuckDNS)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-cloudflare
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com  # Replace with your email
+    privateKeySecretRef:
+      name: letsencrypt-cloudflare-private-key
+    solvers:
+    - dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
+      selector: {}
+---
+# Cloudflare API Token Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-api-token
+  namespace: cert-manager
+stringData:
+  api-token: "YOUR-CLOUDFLARE-API-TOKEN"
+

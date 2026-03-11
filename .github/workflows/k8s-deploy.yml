@@ -1,0 +1,136 @@
+name: Deploy Stockfolio
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VERSION: '1.5'
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'deploy'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}"
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          mv kubectl /usr/local/bin/
+          aws eks update-kubeconfig --name stockfolio-cluster --region ${{ env.AWS_REGION }}
+
+      - name: Deploy Kubernetes
+        run: |
+          kubectl apply -f kubernetes/namespace.yaml
+          kubectl apply -f kubernetes/deployments/
+          kubectl apply -f kubernetes/ingress/
+
+      - name: Wait for Deployments
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/frontend -n stockfolio || true
+          kubectl wait --for=condition=available --timeout=300s deployment/backend -n stockfolio || true
+
+      - name: Get Load Balancer IP
+        run: |
+          sleep 60
+          echo "=== Load Balancer Info ==="
+          kubectl get svc -n stockfolio -o wide
+          LB_IP=$(kubectl get svc -n stockfolio -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          LB_HOST=$(kubectl get svc -n stockfolio -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+          echo ""
+          echo "========================================"
+          echo "🚀 DEPLOY COMPLETE!"
+          echo "========================================"
+          echo "IP/Hostname for DuckDNS: $LB_IP$LB_HOST"
+          echo "Go to duckdns.org -> stockfolio -> current ip: $LB_IP$LB_HOST"
+          echo "Access at: http://stockfolio.duckdns.org"
+          echo "========================================"
+
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'destroy'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ github.event.inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}"
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+
+      - name: Done
+        run: echo "✅ ${{ github.event.inputs.environment }} environment destroyed"

@@ -1,0 +1,146 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      confirm_destroy:
+        description: 'Type "destroy" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VERSION: '1.5'
+
+jobs:
+  terraform-destroy-dev:
+    name: Terraform Destroy - Dev
+    runs-on: ubuntu-latest
+    if: github.event.inputs.environment == 'dev' && github.event.inputs.confirm_destroy == 'destroy'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-Destroy
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Select Workspace
+        id: workspace
+        run: terraform workspace select dev || terraform workspace new dev
+        working-directory: terraform/environments/dev
+
+      - name: Terraform Plan (Destroy)
+        id: plan
+        run: terraform plan -destroy -no-color -out=tfplan
+        working-directory: terraform/environments/dev
+        continue-on-error: true
+
+      - name: Confirm Destroy
+        run: |
+          echo "⚠️  WARNING: This will destroy all resources in the Dev environment!"
+          echo "Plan output:"
+          echo "${{ steps.plan.outputs.stdout }}"
+          
+      - name: Terraform Destroy
+        id: destroy
+        run: terraform destroy -auto-approve
+        working-directory: terraform/environments/dev
+
+      - name: Post Destroy Status
+        if: steps.destroy.outputs.exitcode == 0
+        run: echo "✅ Dev environment destroyed successfully"
+
+  terraform-destroy-prod:
+    name: Terraform Destroy - Prod
+    runs-on: ubuntu-latest
+    if: github.event.inputs.environment == 'prod' && github.event.inputs.confirm_destroy == 'destroy'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PROD }}
+          role-session-name: GitHubActions-Destroy-Prod
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=prod/terraform.tfstate" \
+            -backend-config="region=ap-south-1" \
+            -backend-config="dynamodb_table=${{ secrets.TF_DYNAMODB_TABLE }}" \
+            -backend-config="encrypt=true"
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Select Workspace
+        id: workspace
+        run: terraform workspace select prod || terraform workspace new prod
+        working-directory: terraform/environments/prod
+
+      - name: Terraform Plan (Destroy)
+        id: plan
+        run: terraform plan -destroy -no-color -out=tfplan
+        working-directory: terraform/environments/prod
+        continue-on-error: true
+
+      - name: Confirm Destroy
+        run: |
+          echo "⚠️  WARNING: This will destroy all resources in the Prod environment!"
+          echo "Plan output:"
+          echo "${{ steps.plan.outputs.stdout }}"
+          
+      - name: Terraform Destroy
+        id: destroy
+        run: terraform destroy -auto-approve
+        working-directory: terraform/environments/prod
+
+      - name: Post Destroy Status
+        if: steps.destroy.outputs.exitcode == 0
+        run: echo "✅ Prod environment destroyed successfully"
+

@@ -1,0 +1,159 @@
+# Cert-Manager Installation via Helm for DuckDNS + Let's Encrypt HTTPS
+# This provides automatic free HTTPS certificates for your DuckDNS domain
+
+---
+# Step 1: Install Cert-Manager via Helm
+# Run these commands:
+# 
+# kubectl create namespace cert-manager
+# helm repo add jetstack https://charts.jetstack.io
+# helm repo update
+# helm install cert-manager jetstack/cert-manager \
+#   --namespace cert-manager \
+#   --version v1.13.2 \
+#   --set installCRDs=true
+
+---
+# Step 2: Create ClusterIssuer for Let's Encrypt
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@example.com  # ⚠️ REPLACE WITH YOUR EMAIL
+    privateKeySecretRef:
+      name: letsencrypt-prod-private-key
+    solvers:
+    # Route53 for DNS challenge (works with any domain)
+    - dns01:
+        route53:
+          region: ap-south-1
+          hostedZoneID: ZXXXXXXXXXXX  # ⚠️ REPLACE with your Route53 Hosted Zone ID
+
+---
+# Step 3: TLS Secret (automatically created by cert-manager)
+# The certificate will be automatically generated and stored in this secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: stockfolio-tls
+  namespace: stockfolio
+type: kubernetes.io/tls
+data:
+  # This will be auto-managed by cert-manager
+  # Do not create manually - cert-manager will populate this
+
+---
+# Step 4: Updated Ingress with HTTPS
+# Apply this after cert-manager is installed
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stockfolio-ingress
+  namespace: stockfolio
+  annotations:
+    kubernetes.io/ingress.class: "alb"
+    alb.ingress.kubernetes.io/scheme: "internet-facing"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-2016-08"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    # Cert-manager annotations
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "dns01"
+    cert-manager.io/acme-dns01-provider: "route53"
+    # Redirect HTTP to HTTPS
+    alb.ingress.kubernetes.io/ssl-redirect: "true"
+    # External DNS for DuckDNS
+    external-dns.alpha.kubernetes.io/hostname: "stockfolio.abc123.duckdns.org"
+    external-dns.alpha.kubernetes.io/ttl: "300"
+    external-dns.alpha.kubernetes.io/aws-weight: "100"
+spec:
+  tls:
+  - hosts:
+    - "stockfolio.abc123.duckdns.org"
+    secretName: stockfolio-tls
+  rules:
+  - host: "stockfolio.abc123.duckdns.org"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8080
+      - path: /wallet
+        pathType: Prefix
+        backend:
+          service:
+            name: wallet
+            port:
+              number: 8091
+      - path: /about
+        pathType: Prefix
+        backend:
+          service:
+            name: about
+            port:
+              number: 8090
+      - path: /market-data
+        pathType: Prefix
+        backend:
+          service:
+            name: market-data
+            port:
+              number: 7666
+
+---
+# Step 5: Verify Certificate Status
+# Run: kubectl get certificate -n stockfolio
+# Run: kubectl describe certificate stockfolio-tls -n stockfolio
+
+---
+# DuckDNS + Cert-Manager Quick Start Guide
+#
+# 1. Get a free DuckDNS domain:
+#    - Go to https://www.duckdns.org
+#    - Login with GitHub/Google/etc
+#    - Create a subdomain (e.g., "stockfolio")
+#    - Your domain will be: stockfolio.duckdns.org
+#    - Get your token from the account page
+#
+# 2. Set up Route53 Hosted Zone:
+#    - Create a hosted zone for your DuckDNS domain in Route53
+#    - Note the hosted zone ID
+#
+# 3. Update the ClusterIssuer with:
+#    - Your email address
+#    - Your Route53 hosted zone ID
+#
+# 4. Install cert-manager:
+#    kubectl create namespace cert-manager
+#    helm repo add jetstack https://charts.jetstack.io
+#    helm repo update
+#    helm install cert-manager jetstack/cert-manager \
+#      --namespace cert-manager \
+#      --version v1.13.2 \
+#      --set installCRDs=true
+#
+# 5. Apply the ClusterIssuer and Ingress:
+#    kubectl apply -f cert-manager-issuer.yaml
+#    kubectl apply -f alb-ingress.yaml
+#
+# 6. Wait for certificate to be issued:
+#    kubectl get certificate -n stockfolio
+#    # Should show "READY = True" after a few minutes
+#
+# 7. Access your app:
+#    https://stockfolio.abc123.duckdns.org
+

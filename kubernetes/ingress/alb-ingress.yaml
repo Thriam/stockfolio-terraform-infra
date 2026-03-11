@@ -1,0 +1,54 @@
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stockfolio-ingress
+  namespace: stockfolio
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-2016-08
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: 'true'
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8080
+      - path: /wallet
+        pathType: Prefix
+        backend:
+          service:
+            name: wallet
+            port:
+              number: 8091
+      - path: /about
+        pathType: Prefix
+        backend:
+          service:
+            name: about
+            port:
+              number: 8090
+      - path: /market-data
+        pathType: Prefix
+        backend:
+          service:
+            name: market-data
+            port:
+              number: 7666
+
+
