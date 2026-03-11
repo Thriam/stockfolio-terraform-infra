@@ -15,7 +15,7 @@ Production-ready Terraform infrastructure for AWS EKS cluster deploying the Stoc
 stockfolio-terraform-infra/
 ├── terraform/
 │   ├── backend.tf              # S3 remote backend config
-│   ├── providers.tf             # AWS, Kubernetes, Helm providers
+│   ├── providers.tf            # AWS, Kubernetes, Helm providers
 │   ├── modules/
 │   │   ├── vpc/               # VPC module
 │   │   └── eks/               # EKS cluster module
@@ -32,47 +32,17 @@ stockfolio-terraform-infra/
 ## Prerequisites
 
 1. **AWS Account** with appropriate permissions
-2. **Terraform >= 1.5** installed
-3. **AWS CLI** configured
-4. **GitHub** repository with secrets configured
+2. **GitHub repository** with secrets configured
 
 ## Required GitHub Secrets
 
-### Step 1: Create S3 Bucket for Terraform State
-
-```bash
-# Create S3 bucket
-aws s3 mb s3://stockfolio-terraform-state --region ap-south-1
-
-# Enable versioning
-aws s3api put-bucket-versioning \
-  --bucket stockfolio-terraform-state \
-  --versioning-configuration Status=Enabled
-
-# Block public access
-aws s3api put-public-access-block \
-  --bucket stockfolio-terraform-state \
-  --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-```
-
-### Step 2: Create DynamoDB Table for State Locking
-
-```bash
-aws dynamodb create-table \
-  --table-name stockfolio-terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST \
-  --region ap-south-1
-```
-
-### Step 3: Create IAM Role for GitHub Actions
+### Step 1: Create IAM Role for GitHub Actions
 
 Create a new IAM Role with OIDC provider for GitHub Actions:
 
 1. Go to IAM → Roles → Create role
 2. Select **Web identity**
-3. Choose your GitHub OIDC provider
+3. Choose your GitHub OIDC provider (create one if needed)
 4. Set repository: `your-username/stockfolio-terraform-infra`
 5. Attach the policy below:
 
@@ -92,21 +62,23 @@ Create a new IAM Role with OIDC provider for GitHub Actions:
 }
 ```
 
-### Step 4: Add GitHub Secrets
+### Step 2: Add GitHub Secret
 
-Go to **GitHub → Settings → Secrets and variables → Actions** and add:
+Go to **GitHub → Settings → Secrets and variables → Actions** and add only:
 
-| Secret Name | Value | Required |
-|------------|-------|----------|
-| `AWS_ROLE_ARN` | `arn:aws:iam::123456789:role/GitHubActionsRole` | ✅ Yes |
-| `TF_STATE_BUCKET` | `stockfolio-terraform-state` | ✅ Yes |
-| `TF_DYNAMODB_TABLE` | `stockfolio-terraform-locks` | ✅ Yes |
+| Secret Name | Value |
+|------------|-------|
+| `AWS_ROLE_ARN` | `arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsRole` |
 
-**Replace `123456789` with your AWS Account ID!**
+**Replace `YOUR_ACCOUNT_ID` with your AWS Account ID!**
+
+The workflow will **automatically create**:
+- S3 bucket: `stockfolio-terraform-state`
+- DynamoDB table: `stockfolio-terraform-locks`
 
 ## Quick Start
 
-### Option 1: GitHub Actions (Recommended)
+### GitHub Actions (Recommended)
 
 1. Push code to GitHub
 2. Go to **Actions** → **Deploy Stockfolio**
@@ -114,21 +86,11 @@ Go to **GitHub → Settings → Secrets and variables → Actions** and add:
 4. Select environment: `dev`
 5. Click **Run workflow**
 
-### Option 2: Local Deployment
-
-```bash
-# Navigate to dev environment
-cd terraform/environments/dev
-
-# Initialize Terraform
-terraform init -backend-config="bucket=YOUR_BUCKET" -backend-config="key=dev/terraform.tfstate" -backend-config="region=ap-south-1" -backend-config="dynamodb_table=YOUR_TABLE"
-
-# Plan changes
-terraform plan
-
-# Apply changes
-terraform apply
-```
+The workflow will:
+1. Create S3 bucket & DynamoDB table automatically
+2. Run Terraform init/plan/apply
+3. Deploy Kubernetes resources
+4. Output Load Balancer hostname
 
 ## Services
 
@@ -145,17 +107,16 @@ terraform apply
 
 - **Database**: stockdb
 - **Username**: root
-- **Password**: root (change in production!)
+- **Password**: root
 
 ## Accessing Services
 
 After deployment:
-- Get Load Balancer IP: `kubectl get svc -n stockfolio`
-- Access via: `http://<LB-IP>` or configure DuckDNS
+- Get Load Balancer: `kubectl get svc -n stockfolio`
+- Configure DuckDNS with the ALB hostname
+- Access at: `http://stockfolio.duckdns.org`
 
 ## Destroy Resources
-
-To destroy all resources:
 
 1. Go to **Actions** → **Deploy Stockfolio**
 2. Select action: `destroy`
@@ -172,12 +133,6 @@ To destroy all resources:
 ✅ EBS CSI Driver for persistent storage  
 ✅ IRSA for secure IAM roles  
 ✅ Remote state with S3 + DynamoDB locking  
-
-## Notes
-
-- MySQL password is set to `root` - change in production!
-- Grafana password is set to `admin123` - change in production!
-- Ensure your IAM role has permissions for EKS, EC2, VPC, S3, DynamoDB
 
 ## License
 
